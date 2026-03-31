@@ -1,5 +1,6 @@
+import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, ContextTypes, filters
 from database import Database
 
@@ -8,10 +9,8 @@ logger = logging.getLogger(__name__)
 
 WAITING_PHOTO, WAITING_LOCATION, WAITING_DESCRIPTION = range(3)
 
-# ===== SHU YERGA O'Z MA'LUMOTLARINGIZNI YOZING =====
-BOT_TOKEN = "8250468451:AAE0PCmZnYRc1ByBKp3b0QEYdE-94pSQo00"       # BotFather dan olgan token
-ADMIN_IDS = [890003775]          # @userinfobot dan olgan ID
-# ====================================================
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8250468451:AAE0PCmZnYRc1ByBKp3b0QEYdE-94pSQo00")
+ADMIN_IDS = list(map(int, os.environ.get("ADMIN_IDS", "890003775").split(",")))
 
 db = Database()
 
@@ -28,19 +27,19 @@ def main_menu():
         [KeyboardButton("📋 My Reports"), KeyboardButton("ℹ️ Help")],
     ], resize_keyboard=True)
 
-def location_keyboard():
+def location_kb():
     return ReplyKeyboardMarkup([
         [KeyboardButton("📍 Share My Location", request_location=True)],
         [KeyboardButton("❌ Cancel")],
-    ], resize_keyboard=True)
+    ], resize_keyboard=True, one_time_keyboard=True)
 
 def admin_buttons(report_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Approve & Dispatch Truck", callback_data=f"approve_{report_id}")],
         [
-            InlineKeyboardButton("❌ Reject",    callback_data=f"reject_{report_id}"),
-            InlineKeyboardButton("👁 Seen",      callback_data=f"seen_{report_id}"),
-            InlineKeyboardButton("🏁 Complete",  callback_data=f"complete_{report_id}"),
+            InlineKeyboardButton("❌ Reject",   callback_data=f"reject_{report_id}"),
+            InlineKeyboardButton("👁 Seen",     callback_data=f"seen_{report_id}"),
+            InlineKeyboardButton("🏁 Complete", callback_data=f"complete_{report_id}"),
         ],
     ])
 
@@ -64,6 +63,7 @@ async def notify_admins(context, report):
             logger.warning("Admin notify error: %s", e)
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     user = update.effective_user
     db.save_user(user.id, user.full_name, user.username)
     await update.message.reply_text(
@@ -75,17 +75,23 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     await update.message.reply_text(
-        "📸 <b>Step 1 of 3</b> — Send a photo of the trash bin:",
+        "📸 <b>Step 1 of 3 — Photo</b>\n\n"
+        "Send a photo of the overflowing trash bin:",
         parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
     )
     return WAITING_PHOTO
 
 async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["photo_id"] = update.message.photo[-1].file_id
     await update.message.reply_text(
-        "✅ Photo received!\n\n📍 <b>Step 2 of 3</b> — Share your location:",
-        parse_mode="HTML", reply_markup=location_keyboard(),
+        "✅ Photo received!\n\n"
+        "📍 <b>Step 2 of 3 — Location</b>\n\n"
+        "Tap the button to share your GPS location:",
+        parse_mode="HTML",
+        reply_markup=location_kb(),
     )
     return WAITING_LOCATION
 
@@ -94,9 +100,11 @@ async def receive_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["lat"] = loc.latitude
     context.user_data["lon"] = loc.longitude
     await update.message.reply_text(
-        "✅ Location saved!\n\n💬 <b>Step 3 of 3</b> — Add a note or tap Skip:",
+        "✅ Location saved!\n\n"
+        "💬 <b>Step 3 of 3 — Note (optional)</b>\n\n"
+        "Add a short note or tap Skip:",
         parse_mode="HTML",
-       reply_markup=ReplyKeyboardMarkup([["➡️ Skip"]], resize_keyboard=True, one_time_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup([["➡️ Skip"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return WAITING_DESCRIPTION
 
@@ -105,6 +113,14 @@ async def receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE
     desc = None if text == "➡️ Skip" else text
     user = update.effective_user
     d = context.user_data
+
+    if "photo_id" not in d or "lat" not in d:
+        await update.message.reply_text(
+            "❌ Something went wrong. Please start again.",
+            reply_markup=main_menu(),
+        )
+        return ConversationHandler.END
+
     report_id = db.create_report(
         user_id=user.id, full_name=user.full_name, username=user.username,
         photo_id=d["photo_id"], lat=d["lat"], lon=d["lon"], description=desc,
@@ -114,7 +130,7 @@ async def receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🎉 <b>Report submitted!</b>\n\n"
         f"🆔 Report ID: <code>#{report_id}</code>\n"
         f"⏳ Status: Under Review\n\n"
-        "Thank you! 🌱",
+        "Thank you for keeping the city clean! 🌱",
         parse_mode="HTML", reply_markup=main_menu(),
     )
     await notify_admins(context, report)
@@ -155,9 +171,12 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = db.get_stats()
     await update.message.reply_text(
         f"🛠 <b>Admin Panel</b>\n\n"
-        f"👥 Users: {s['users']}\n📋 Total: {s['total']}\n"
-        f"⏳ Pending: {s['pending']}\n✅ Approved: {s['approved']}\n🏁 Done: {s['completed']}\n\n"
-        "/pending — pending reports",
+        f"👥 Users: {s['users']}\n"
+        f"📋 Total: {s['total']}\n"
+        f"⏳ Pending: {s['pending']}\n"
+        f"✅ Approved: {s['approved']}\n"
+        f"🏁 Done: {s['completed']}\n\n"
+        "/pending — list pending reports",
         parse_mode="HTML",
     )
 
@@ -189,7 +208,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     name = query.from_user.full_name
     old = query.message.caption or ""
-
     msgs = {
         "approve": f"🚛 Report <code>#{rid}</code> approved! Truck is on the way. ETA: 2–4 hours ⏱",
         "reject":  f"ℹ️ Report <code>#{rid}</code> was not approved. Please resubmit with a clearer photo.",
@@ -197,7 +215,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     statuses = {"approve": "approved", "reject": "rejected", "complete": "completed"}
     labels   = {"approve": "✅ APPROVED", "reject": "❌ REJECTED", "complete": "🏁 COMPLETED"}
-
     if action in statuses:
         db.update_report_status(rid, statuses[action])
         try:
@@ -214,10 +231,20 @@ def main():
         entry_points=[MessageHandler(filters.Regex("^📸 Report a Trash Bin$"), report_start)],
         states={
             WAITING_PHOTO:       [MessageHandler(filters.PHOTO, receive_photo)],
-            WAITING_LOCATION:    [MessageHandler(filters.LOCATION, receive_location), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_report)],
-            WAITING_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_description)],
+            WAITING_LOCATION:    [
+                MessageHandler(filters.LOCATION, receive_location),
+                MessageHandler(filters.Regex("^❌ Cancel$"), cancel_report),
+            ],
+            WAITING_DESCRIPTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_description),
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel_report)],
+        fallbacks=[
+            CommandHandler("cancel", cancel_report),
+            CommandHandler("start", cmd_start),
+            MessageHandler(filters.Regex("^📸 Report a Trash Bin$"), report_start),
+        ],
+        allow_reentry=True,
     )
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("help",    cmd_help))
@@ -228,7 +255,7 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ Help$"),       cmd_help))
     app.add_handler(CallbackQueryHandler(admin_callback))
     logger.info("CleanCity Bot is running...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()

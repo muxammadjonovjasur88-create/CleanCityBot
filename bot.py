@@ -96,7 +96,7 @@ async def receive_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Location saved!\n\n💬 <b>Step 3 of 3</b> — Add a note or tap Skip:",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardMarkup([["➡️ Skip"]], resize_keyboard=True),
+       reply_markup=ReplyKeyboardMarkup([["➡️ Skip"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return WAITING_DESCRIPTION
 

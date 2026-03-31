@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 WAITING_PHOTO, WAITING_LOCATION, WAITING_DESCRIPTION = range(3)
 
 # ===== SHU YERGA O'Z MA'LUMOTLARINGIZNI YOZING =====
-BOT_TOKEN = "TOKEN_YOZING"       # BotFather dan olgan token
-ADMIN_IDS = [123456789]          # @userinfobot dan olgan ID
+BOT_TOKEN = "8250468451:AAE0PCmZnYRc1ByBKp3b0QEYdE-94pSQo00"       # BotFather dan olgan token
+ADMIN_IDS = [890003775]          # @userinfobot dan olgan ID
 # ====================================================
 
 db = Database()
